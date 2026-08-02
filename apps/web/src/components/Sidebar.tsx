@@ -1,0 +1,1 @@
+// Sidebar.tsx - Fallback template (LLM unavailable)
