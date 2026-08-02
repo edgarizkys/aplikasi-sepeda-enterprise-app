@@ -1,0 +1,1 @@
+// page.tsx - Fallback template (LLM unavailable)
