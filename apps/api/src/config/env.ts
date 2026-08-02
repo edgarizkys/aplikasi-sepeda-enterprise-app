@@ -1,3 +1,4 @@
+// apps/server/src/config/env.ts
 import { z } from 'zod';
 
 const envSchema = z.object({
@@ -14,42 +15,61 @@ const envSchema = z.object({
 
   // JWT
   JWT_ACCESS_SECRET: z.string().min(32),
-  JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  JWT_REFRESH_SECRET: z.string().min(32),
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
 
-  // Security
+  // Bcrypt
   BCRYPT_ROUNDS: z.coerce.number().default(10),
+
+  // CORS
   CORS_ORIGIN: z.string().default('http://localhost:3001'),
-  RATE_LIMIT_WINDOW_MS: z.coerce.number().default(900000),
-  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
+  CORS_CREDENTIALS: z.enum(['true', 'false']).transform(v => v === 'true').default('true'),
 
   // Logging
-  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  LOG_FORMAT: z.enum(['json', 'simple']).default('json'),
 
   // Pagination
-  DEFAULT_PAGE: z.coerce.number().default(1),
-  DEFAULT_LIMIT: z.coerce.number().default(20),
-  MAX_LIMIT: z.coerce.number().default(100),
+  DEFAULT_PAGE_SIZE: z.coerce.number().default(20),
+  MAX_PAGE_SIZE: z.coerce.number().default(100),
 
-  // Multi-tenancy
-  ENABLE_MULTI_TENANCY: z.coerce.boolean().default(true),
+  // File Upload
+  MAX_FILE_SIZE_MB: z.coerce.number().default(10),
+  UPLOAD_DIR: z.string().default('./uploads'),
+
+  // Email (optional)
+  MAIL_HOST: z.string().optional(),
+  MAIL_PORT: z.coerce.number().optional(),
+  MAIL_USER: z.string().optional(),
+  MAIL_PASS: z.string().optional(),
+  MAIL_FROM: z.string().email().optional(),
+
+  // Redis (optional)
+  REDIS_URL: z.string().optional(),
+
+  // API Keys
+  API_KEY_HEADER: z.string().default('x-api-key'),
 });
 
-type Environment = z.infer<typeof envSchema>;
+export type Env = z.infer<typeof envSchema>;
 
-const parseEnv = (): Environment => {
-  const env = envSchema.safeParse(process.env);
+let cachedEnv: Env | null = null;
 
-  if (!env.success) {
-    console.error('❌ Environment validation failed:');
-    console.error(env.error.flatten().fieldErrors);
+export function getEnv(): Env {
+  if (cachedEnv) {
+    return cachedEnv;
+  }
+
+  const parsed = envSchema.safeParse(process.env);
+
+  if (!parsed.success) {
+    console.error('Invalid environment variables:', parsed.error.flatten());
     process.exit(1);
   }
 
-  return env.data;
-};
+  cachedEnv = parsed.data;
+  return cachedEnv;
+}
 
-export const config = parseEnv();
-
-export type { Environment };
+export const env = getEnv();
