@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { AppError } from '../utils/AppError';
+import { AppError } from '../utils/appError';
 
 export interface AuthUser {
   id: string;
@@ -16,39 +16,18 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
+      tenantId?: string;
     }
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'sepeda-enterprise-secret-key-2026';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'sepeda-enterprise-refresh-secret-key-2026';
 
-export const authMiddleware = (req: Request, res: Response, next: NextFunction): void => {
+export const verifyAccessToken = (token: string): AuthUser => {
   try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader) {
-      // Allow demo/test access with default user
-      if (process.env.NODE_ENV === 'development') {
-        req.user = {
-          id: '1',
-          email: 'demo@aplikasisepeda.com',
-          role: 'admin',
-          tenantId: '1',
-          name: 'Demo User'
-        };
-        return next();
-      }
-      throw new AppError('Token tidak ditemukan', 401, 'TOKEN_NOT_FOUND');
-    }
-
-    const token = authHeader.startsWith('Bearer ') 
-      ? authHeader.slice(7) 
-      : authHeader;
-
     const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
-    req.user = decoded;
-    next();
+    return decoded;
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
       throw new AppError('Token telah kadaluarsa', 401, 'TOKEN_EXPIRED');
@@ -56,30 +35,20 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction):
     if (error instanceof jwt.JsonWebTokenError) {
       throw new AppError('Token tidak valid', 401, 'INVALID_TOKEN');
     }
-    if (error instanceof AppError) {
-      throw error;
-    }
-    throw new AppError('Gagal autentikasi', 401, 'AUTH_FAILED');
+    throw new AppError('Gagal memverifikasi token', 401, 'TOKEN_VERIFICATION_FAILED');
   }
 };
 
-export const requireAuth = (req: Request, res: Response, next: NextFunction): void => {
-  if (!req.user) {
-    throw new AppError('Autentikasi diperlukan', 401, 'AUTHENTICATION_REQUIRED');
+export const verifyRefreshToken = (token: string): AuthUser => {
+  try {
+    const decoded = jwt.verify(token, JWT_REFRESH_SECRET) as AuthUser;
+    return decoded;
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new AppError('Refresh token telah kadaluarsa', 401, 'REFRESH_TOKEN_EXPIRED');
+    }
+    throw new AppError('Refresh token tidak valid', 401, 'INVALID_REFRESH_TOKEN');
   }
-  next();
-};
-
-export const requireRole = (...roles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      throw new AppError('Autentikasi diperlukan', 401, 'AUTHENTICATION_REQUIRED');
-    }
-    if (!roles.includes(req.user.role)) {
-      throw new AppError('Anda tidak memiliki akses ke resource ini', 403, 'INSUFFICIENT_PERMISSIONS');
-    }
-    next();
-  };
 };
 
 export const generateAccessToken = (user: Omit<AuthUser, 'iat' | 'exp'>): string => {
@@ -90,27 +59,107 @@ export const generateRefreshToken = (user: Omit<AuthUser, 'iat' | 'exp'>): strin
   return jwt.sign(user, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 };
 
-export const verifyRefreshToken = (token: string): AuthUser => {
+export const authMiddleware = (req: Request, res: Response, next: NextFunction): void => {
   try {
-    return jwt.verify(token, JWT_REFRESH_SECRET) as AuthUser;
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      throw new AppError('Header Authorization tidak ditemukan', 401, 'MISSING_AUTH_HEADER');
+    }
+
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0] !== 'Bearer') {
+      throw new AppError('Format Authorization header tidak valid', 401, 'INVALID_AUTH_FORMAT');
+    }
+
+    const token = parts[1];
+    const user = verifyAccessToken(token);
+
+    req.user = user;
+    req.tenantId = user.tenantId;
+
+    next();
   } catch (error) {
-    throw new AppError('Refresh token tidak valid', 401, 'INVALID_REFRESH_TOKEN');
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'AUTH_MIDDLEWARE_ERROR',
+        message: 'Terjadi kesalahan pada middleware autentikasi',
+      },
+    });
   }
 };
 
-export const optionalAuth = (req: Request, res: Response, next: NextFunction): void => {
+export const optionalAuthMiddleware = (req: Request, res: Response, next: NextFunction): void => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return next();
+
+    if (authHeader) {
+      const parts = authHeader.split(' ');
+      if (parts.length === 2 && parts[0] === 'Bearer') {
+        const token = parts[1];
+        const user = verifyAccessToken(token);
+        req.user = user;
+        req.tenantId = user.tenantId;
+      }
     }
-    const token = authHeader.startsWith('Bearer ') 
-      ? authHeader.slice(7) 
-      : authHeader;
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
-    req.user = decoded;
+
+    next();
   } catch (error) {
-    // Ignore auth errors for optional auth
+    next();
   }
+};
+
+export const requireRole = (...roles: AuthUser['role'][]) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Autentikasi diperlukan',
+        },
+      });
+      return;
+    }
+
+    if (!roles.includes(req.user.role)) {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Anda tidak memiliki akses ke resource ini',
+        },
+      });
+      return;
+    }
+
+    next();
+  };
+};
+
+export const requireTenant = (req: Request, res: Response, next: NextFunction): void => {
+  if (!req.user || !req.tenantId) {
+    res.status(401).json({
+      success: false,
+      error: {
+        code: 'MISSING_TENANT',
+        message: 'ID tenant tidak ditemukan',
+      },
+    });
+    return;
+  }
+
   next();
 };
