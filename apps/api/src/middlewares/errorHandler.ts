@@ -1,68 +1,69 @@
+// src/shared/errorHandler.ts
+
 export class AppError extends Error {
   constructor(
     public code: string,
-    public statusCode: number,
-    message: string,
+    public message: string,
+    public statusCode: number = 500,
     public details?: Record<string, unknown>
   ) {
     super(message);
-    this.name = 'AppError';
     Object.setPrototypeOf(this, AppError.prototype);
   }
 }
 
 export class ValidationError extends AppError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super('VALIDATION_ERROR', 400, message, details);
-    this.name = 'ValidationError';
+    super('VALIDATION_ERROR', message, 400, details);
     Object.setPrototypeOf(this, ValidationError.prototype);
   }
 }
 
 export class AuthenticationError extends AppError {
   constructor(message: string = 'Autentikasi gagal') {
-    super('AUTHENTICATION_ERROR', 401, message);
-    this.name = 'AuthenticationError';
+    super('AUTHENTICATION_ERROR', message, 401);
     Object.setPrototypeOf(this, AuthenticationError.prototype);
   }
 }
 
 export class AuthorizationError extends AppError {
-  constructor(message: string = 'Anda tidak memiliki akses ke resource ini') {
-    super('AUTHORIZATION_ERROR', 403, message);
-    this.name = 'AuthorizationError';
+  constructor(message: string = 'Anda tidak memiliki akses') {
+    super('AUTHORIZATION_ERROR', message, 403);
     Object.setPrototypeOf(this, AuthorizationError.prototype);
   }
 }
 
 export class NotFoundError extends AppError {
-  constructor(resource: string = 'Resource') {
-    super('NOT_FOUND_ERROR', 404, `${resource} tidak ditemukan`);
-    this.name = 'NotFoundError';
+  constructor(resource: string) {
+    super('NOT_FOUND', `${resource} tidak ditemukan`, 404);
     Object.setPrototypeOf(this, NotFoundError.prototype);
   }
 }
 
 export class ConflictError extends AppError {
   constructor(message: string) {
-    super('CONFLICT_ERROR', 409, message);
-    this.name = 'ConflictError';
+    super('CONFLICT', message, 409);
     Object.setPrototypeOf(this, ConflictError.prototype);
+  }
+}
+
+export class BadRequestError extends AppError {
+  constructor(message: string) {
+    super('BAD_REQUEST', message, 400);
+    Object.setPrototypeOf(this, BadRequestError.prototype);
   }
 }
 
 export class InternalServerError extends AppError {
   constructor(message: string = 'Terjadi kesalahan internal') {
-    super('INTERNAL_SERVER_ERROR', 500, message);
-    this.name = 'InternalServerError';
+    super('INTERNAL_SERVER_ERROR', message, 500);
     Object.setPrototypeOf(this, InternalServerError.prototype);
   }
 }
 
 export class RateLimitError extends AppError {
-  constructor(message: string = 'Terlalu banyak permintaan, coba lagi nanti') {
-    super('RATE_LIMIT_ERROR', 429, message);
-    this.name = 'RateLimitError';
+  constructor(message: string = 'Terlalu banyak permintaan') {
+    super('RATE_LIMIT_ERROR', message, 429);
     Object.setPrototypeOf(this, RateLimitError.prototype);
   }
 }
@@ -73,85 +74,41 @@ export interface ErrorResponse {
     code: string;
     message: string;
     details?: Record<string, unknown>;
-    timestamp: string;
-    requestId?: string;
   };
 }
 
-export interface SuccessResponse<T> {
-  success: true;
-  data: T;
-  meta?: {
-    page?: number;
-    limit?: number;
-    total?: number;
-    hasMore?: boolean;
-  };
-}
-
-export const formatErrorResponse = (
-  error: unknown,
-  requestId?: string
-): ErrorResponse => {
-  let appError: AppError;
-
-  if (error instanceof AppError) {
-    appError = error;
-  } else if (error instanceof Error) {
-    appError = new InternalServerError(error.message);
-  } else {
-    appError = new InternalServerError('Kesalahan tidak diketahui');
-  }
-
+export function formatErrorResponse(error: AppError): ErrorResponse {
   return {
     success: false,
     error: {
-      code: appError.code,
-      message: appError.message,
-      details: appError.details,
-      timestamp: new Date().toISOString(),
-      requestId,
+      code: error.code,
+      message: error.message,
+      ...(error.details && { details: error.details }),
     },
   };
-};
+}
 
-export const formatSuccessResponse = <T>(
-  data: T,
-  meta?: SuccessResponse<T>['meta']
-): SuccessResponse<T> => {
-  return {
-    success: true,
-    data,
-    ...(meta && { meta }),
-  };
-};
+export function isAppError(error: unknown): error is AppError {
+  return error instanceof AppError;
+}
 
-export const asyncHandler =
-  (fn: Function) =>
-  (req: any, res: any, next: any) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
+export function getErrorStatusCode(error: unknown): number {
+  if (isAppError(error)) {
+    return error.statusCode;
+  }
+  return 500;
+}
 
-export const errorMiddleware = (
-  err: Error | AppError,
-  req: any,
-  res: any,
-  next: any
-) => {
-  const requestId = req.id || req.headers['x-request-id'];
-
-  if (err instanceof AppError) {
-    return res.status(err.statusCode).json(formatErrorResponse(err, requestId));
+export function getErrorResponse(error: unknown): ErrorResponse {
+  if (isAppError(error)) {
+    return formatErrorResponse(error);
   }
 
-  console.error('[ERROR]', err);
+  if (error instanceof Error) {
+    const appError = new InternalServerError(error.message);
+    return formatErrorResponse(appError);
+  }
 
-  return res
-    .status(500)
-    .json(
-      formatErrorResponse(
-        new InternalServerError('Terjadi kesalahan internal'),
-        requestId
-      )
-    );
-};
+  const appError = new InternalServerError('Terjadi kesalahan yang tidak diketahui');
+  return formatErrorResponse(appError);
+}
