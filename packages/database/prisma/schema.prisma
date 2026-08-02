@@ -8,98 +8,150 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================================================
-// AUTH & TENANT MODELS
-// ============================================================================
-
-model Tenant {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-
-  // Relations
-  users  User[]
-  items  Item[]
-
-  @@index([createdAt])
-}
-
 model User {
-  id            String   @id @default(cuid())
-  tenantId      String
-  email         String
+  id            String    @id @default(cuid())
+  email         String    @unique
   password      String
   name          String
-  role          UserRole @default(USER)
+  role          String    @default("user")
+  tenantId      String
+  isActive      Boolean   @default(true)
+  lastLogin     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  refreshTokens RefreshToken[]
+  riders        Rider[]
+
+  @@index([tenantId])
+  @@index([email])
+  @@index([tenantId, createdAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Bike {
+  id            String   @id @default(cuid())
+  tenantId      String
+  model         String
+  serialNumber  String   @unique
+  brand         String
+  bikeType      String
+  purchaseDate  DateTime
+  purchasePrice Float
+  condition     String   @default("good")
+  status        String   @default("available")
+  location      String
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   deletedAt     DateTime?
 
-  // Relations
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rentals       Rental[]
+  maintenance   Maintenance[]
 
-  @@unique([tenantId, email])
   @@index([tenantId])
-  @@index([createdAt])
-}
-
-enum UserRole {
-  ADMIN
-  MANAGER
-  USER
-}
-
-model RefreshToken {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-}
-
-// ============================================================================
-// CORE BUSINESS MODELS
-// ============================================================================
-
-model Item {
-  id          String   @id @default(cuid())
-  tenantId    String
-  name        String
-  description String?
-  status      String   @default("active")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
-
-  // Relations
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@unique([tenantId, id])
+  @@index([serialNumber])
+  @@index([status])
   @@index([tenantId, createdAt])
-  @@index([tenantId, status])
+  @@unique([tenantId, serialNumber])
 }
 
-// ============================================================================
-// AUDIT & LOGGING
-// ============================================================================
+model Rider {
+  id            String   @id @default(cuid())
+  tenantId      String
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  email         String
+  phone         String
+  employeeId    String
+  department    String
+  joinDate      DateTime
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  rentals       Rental[]
+
+  @@index([tenantId])
+  @@index([email])
+  @@index([employeeId])
+  @@index([tenantId, createdAt])
+  @@unique([tenantId, employeeId])
+}
+
+model Rental {
+  id            String    @id @default(cuid())
+  tenantId      String
+  riderId       String
+  rider         Rider     @relation(fields: [riderId], references: [id], onDelete: Restrict)
+  bikeId        String
+  bike          Bike      @relation(fields: [bikeId], references: [id], onDelete: Restrict)
+  checkoutTime  DateTime
+  returnTime    DateTime?
+  durationHours Float?
+  status        String    @default("active")
+  purpose       String
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  @@index([tenantId])
+  @@index([riderId])
+  @@index([bikeId])
+  @@index([status])
+  @@index([tenantId, createdAt])
+}
+
+model Maintenance {
+  id                String   @id @default(cuid())
+  tenantId          String
+  bikeId            String
+  bike              Bike     @relation(fields: [bikeId], references: [id], onDelete: Restrict)
+  maintenanceType   String
+  date              DateTime
+  description       String
+  cost              Float
+  technician        String
+  notes             String?
+  isCompleted       Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+
+  @@index([tenantId])
+  @@index([bikeId])
+  @@index([date])
+  @@index([tenantId, createdAt])
+}
 
 model AuditLog {
   id        String   @id @default(cuid())
   tenantId  String
-  userId    String?
+  userId    String
   action    String
   entity    String
   entityId  String
-  changes   String?  // JSON stringified
+  changes   String?
   ipAddress String?
   createdAt DateTime @default(now())
 
+  @@index([tenantId])
+  @@index([userId])
+  @@index([action])
   @@index([tenantId, createdAt])
-  @@index([entityId])
 }
