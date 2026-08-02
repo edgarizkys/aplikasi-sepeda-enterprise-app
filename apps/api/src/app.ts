@@ -7,190 +7,202 @@ import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
-// Middleware imports
-import { rateLimiter } from './middleware/rateLimiter';
-import { tenantMiddleware } from './middleware/tenantMiddleware';
-import { authMiddleware } from './middleware/authMiddleware';
-import { errorHandler } from './middleware/errorHandler';
+const app: Express = express();
+const PORT = process.env.PORT || 3000;
+const prisma = new PrismaClient();
 
-// Routes imports
-import { apiRoutes } from './routes/api';
+// Security middleware
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
-// Types
-interface AppRequest extends Request {
-  tenantId?: string;
-  userId?: string;
-  user?: {
-    id: string;
-    email: string;
-    role: string;
-  };
-}
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
 
-declare global {
-  namespace Express {
-    interface Request {
-      tenantId?: string;
-      userId?: string;
-      user?: {
-        id: string;
-        email: string;
-        role: string;
-      };
-    }
-  }
-}
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Initialize Prisma Client
-const prisma = new PrismaClient({
-  errorFormat: 'pretty',
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+// Request logging middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.path}`);
+  next();
 });
 
-// Application factory
-export function createApp(): Express {
-  const app: Express = express();
+// Rate limiter middleware
+const rateLimitMap = new Map<string, number[]>();
 
-  // Trust proxy
-  app.set('trust proxy', 1);
+const rateLimiter = (req: Request, res: Response, next: NextFunction) => {
+  const ip = req.ip || 'unknown';
+  const now = Date.now();
+  const windowStart = now - 60000; // 1 minute window
 
-  // Security middleware
-  app.use(
-    helmet({
-      contentSecurityPolicy: false,
-      frameguard: { action: 'deny' },
-      noSniff: true,
-      xssFilter: true,
-    })
-  );
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, []);
+  }
 
-  // CORS configuration
-  app.use(
-    cors({
-      origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
-      maxAge: 86400,
-    })
-  );
+  const requests = rateLimitMap.get(ip)!.filter(time => time > windowStart);
+  
+  if (requests.length >= 100) {
+    return res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Terlalu banyak permintaan. Coba lagi dalam beberapa saat.',
+      },
+    });
+  }
 
-  // Body parser middleware
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ limit: '10mb', extended: true }));
+  requests.push(now);
+  rateLimitMap.set(ip, requests);
+  next();
+};
 
-  // Rate limiting
-  app.use(rateLimiter);
+app.use(rateLimiter);
 
-  // Tenant middleware (extracts tenantId from header or subdomain)
-  app.use(tenantMiddleware);
+// Tenant extraction middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const tenantId = req.headers['x-tenant-id'] as string || 'default';
+  (req as any).tenantId = tenantId;
+  next();
+});
 
-  // Public health check endpoint
-  app.get('/health', (req: Request, res: Response) => {
-    res.json({
-      status: 'ok',
+// Static files
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Health check endpoint
+app.get('/health', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      status: 'OK',
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV,
-    });
+      environment: process.env.NODE_ENV || 'development',
+    },
   });
+});
 
-  // API routes
-  app.use('/api', apiRoutes);
-
-  // Static files serving
-  app.use(express.static(path.join(__dirname, '../public'), { maxAge: '1h' }));
-
-  // SPA fallback for frontend
-  app.get('*', (req: Request, res: Response) => {
-    res.sendFile(path.join(__dirname, '../public', 'index.html'), (err) => {
-      if (err) {
-        res.status(404).json({
-          success: false,
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Resource not found',
-          },
-        });
-      }
-    });
+// API Routes placeholder
+app.use('/api/bikes', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: [],
+    meta: {
+      page: 1,
+      limit: 20,
+      total: 0,
+    },
   });
+});
 
-  // Global error handler (must be last)
-  app.use(errorHandler);
+app.use('/api/riders', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: [],
+    meta: {
+      page: 1,
+      limit: 20,
+      total: 0,
+    },
+  });
+});
 
-  return app;
-}
+app.use('/api/rentals', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: [],
+    meta: {
+      page: 1,
+      limit: 20,
+      total: 0,
+    },
+  });
+});
 
-// Database initialization
-async function initializeDatabase(): Promise<void> {
+app.use('/api/maintenance', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: [],
+    meta: {
+      page: 1,
+      limit: 20,
+      total: 0,
+    },
+  });
+});
+
+// SPA fallback
+app.get('*', (req: Request, res: Response) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Error handling middleware
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  console.error('[ERROR]', err);
+
+  const statusCode = err.statusCode || 500;
+  const errorCode = err.code || 'INTERNAL_SERVER_ERROR';
+  const message = err.message || 'Terjadi kesalahan pada server.';
+
+  res.status(statusCode).json({
+    success: false,
+    error: {
+      code: errorCode,
+      message,
+    },
+  });
+});
+
+// 404 handler
+app.use((req: Request, res: Response) => {
+  res.status(404).json({
+    success: false,
+    error: {
+      code: 'NOT_FOUND',
+      message: 'Endpoint tidak ditemukan.',
+    },
+  });
+});
+
+// Initialize server
+const initializeServer = async () => {
   try {
-    await prisma.$connect();
-    console.log('[DATABASE] Connected to PostgreSQL via Prisma');
+    // Test database connection
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('✓ Database connected successfully');
 
-    // Run pending migrations
-    const migrationResult = await prisma.$executeRawUnsafe(
-      'SELECT 1 FROM information_schema.tables WHERE table_name = \'_prisma_migrations\' LIMIT 1'
-    );
-    console.log('[DATABASE] Migrations table verified');
+    // Start listening
+    app.listen(PORT, () => {
+      console.log(`[ENTERPRISE] Aplikasi Sepeda Enterprise berjalan di port ${PORT}`);
+      console.log(`[ENTERPRISE] Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`[ENTERPRISE] Health check: http://localhost:${PORT}/health`);
+    });
   } catch (error) {
-    console.error('[DATABASE] Failed to initialize:', error);
+    console.error('✗ Failed to initialize server:', error);
     process.exit(1);
   }
-}
+};
 
 // Graceful shutdown
-function setupGracefulShutdown(server: any): void {
-  const shutdown = async (signal: string) => {
-    console.log(`\n[SHUTDOWN] Received ${signal}`);
-    server.close(async () => {
-      console.log('[SHUTDOWN] HTTP server closed');
-      await prisma.$disconnect();
-      console.log('[SHUTDOWN] Database connection closed');
-      process.exit(0);
-    });
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
 
-    // Force shutdown after 30 seconds
-    setTimeout(() => {
-      console.error('[SHUTDOWN] Force shutdown after timeout');
-      process.exit(1);
-    }, 30000);
-  };
-
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
-}
-
-// Main execution
-async function bootstrap(): Promise<void> {
-  try {
-    // Initialize database
-    await initializeDatabase();
-
-    // Create Express app
-    const app = createApp();
-    const PORT = parseInt(process.env.PORT || '3000', 10);
-    const HOST = process.env.HOST || '0.0.0.0';
-
-    // Start server
-    const server = app.listen(PORT, HOST, () => {
-      console.log(`\n[ENTERPRISE] Aplikasi Sepeda Enterprise`);
-      console.log(`[SERVER] Running on http://${HOST}:${PORT}`);
-      console.log(`[ENVIRONMENT] ${process.env.NODE_ENV}`);
-      console.log(`[VERSION] v1.0.0\n`);
-    });
-
-    // Setup graceful shutdown
-    setupGracefulShutdown(server);
-  } catch (error) {
-    console.error('[BOOTSTRAP] Fatal error:', error);
-    process.exit(1);
-  }
-}
-
-// Export for testing
-export { prisma };
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
 
 // Start application
-if (require.main === module) {
-  bootstrap();
-}
+initializeServer();
+
+export default app;
