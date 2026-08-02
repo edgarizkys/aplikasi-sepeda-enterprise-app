@@ -1,53 +1,62 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-interface User {
+export interface AuthUser {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'user' | 'manager';
+  role: 'admin' | 'manager' | 'operator' | 'viewer';
   tenantId: string;
   avatar?: string;
-  createdAt: string;
 }
 
-interface AuthState {
-  user: User | null;
-  accessToken: string | null;
-  refreshToken: string | null;
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface AuthState {
+  user: AuthUser | null;
+  tokens: AuthTokens | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+}
 
-  // Actions
-  setUser: (user: User) => void;
-  setTokens: (accessToken: string, refreshToken: string) => void;
+export interface AuthActions {
+  setUser: (user: AuthUser | null) => void;
+  setTokens: (tokens: AuthTokens | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  register: (data: {
+    email: string;
+    password: string;
+    name: string;
+    tenantId: string;
+  }) => Promise<void>;
   refreshAccessToken: () => Promise<void>;
+  updateProfile: (data: Partial<AuthUser>) => Promise<void>;
   checkAuth: () => Promise<void>;
-  updateUserProfile: (data: Partial<User>) => Promise<void>;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
+const initialState: AuthState = {
+  user: null,
+  tokens: null,
+  isAuthenticated: false,
+  isLoading: false,
+  error: null,
+};
 
-export const useAuthStore = create<AuthState>()(
+export const useAuthStore = create<AuthState & AuthActions>()(
   persist(
     (set, get) => ({
-      user: null,
-      accessToken: null,
-      refreshToken: null,
-      isAuthenticated: false,
-      isLoading: false,
-      error: null,
+      ...initialState,
 
-      setUser: (user) => set({ user, isAuthenticated: true }),
+      setUser: (user) => set({ user }),
 
-      setTokens: (accessToken, refreshToken) =>
-        set({ accessToken, refreshToken }),
+      setTokens: (tokens) => set({ tokens }),
 
       setLoading: (isLoading) => set({ isLoading }),
 
@@ -56,7 +65,7 @@ export const useAuthStore = create<AuthState>()(
       login: async (email, password) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE_URL}/auth/login`, {
+          const response = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password }),
@@ -64,23 +73,28 @@ export const useAuthStore = create<AuthState>()(
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(
-              errorData.error?.message || 'Gagal masuk, silakan coba lagi'
-            );
+            throw new Error(errorData.error?.message || 'Gagal masuk');
           }
 
           const data = await response.json();
           set({
             user: data.data.user,
-            accessToken: data.data.accessToken,
-            refreshToken: data.data.refreshToken,
+            tokens: {
+              accessToken: data.data.accessToken,
+              refreshToken: data.data.refreshToken,
+            },
             isAuthenticated: true,
             isLoading: false,
           });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Terjadi kesalahan';
-          set({ error: message, isLoading: false });
+          const message = error instanceof Error ? error.message : 'Terjadi kesalahan saat masuk';
+          set({
+            error: message,
+            isLoading: false,
+            user: null,
+            tokens: null,
+            isAuthenticated: false,
+          });
           throw error;
         }
       },
@@ -88,94 +102,143 @@ export const useAuthStore = create<AuthState>()(
       logout: () => {
         set({
           user: null,
-          accessToken: null,
-          refreshToken: null,
+          tokens: null,
           isAuthenticated: false,
           error: null,
         });
+        localStorage.removeItem('auth-storage');
       },
 
-      register: async (email, password, name) => {
+      register: async (data) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE_URL}/auth/register`, {
+          const response = await fetch('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, name }),
+            body: JSON.stringify(data),
           });
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(
-              errorData.error?.message || 'Gagal mendaftar, silakan coba lagi'
-            );
+            throw new Error(errorData.error?.message || 'Gagal mendaftar');
           }
 
-          const data = await response.json();
+          const result = await response.json();
           set({
-            user: data.data.user,
-            accessToken: data.data.accessToken,
-            refreshToken: data.data.refreshToken,
+            user: result.data.user,
+            tokens: {
+              accessToken: result.data.accessToken,
+              refreshToken: result.data.refreshToken,
+            },
             isAuthenticated: true,
             isLoading: false,
           });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Terjadi kesalahan';
-          set({ error: message, isLoading: false });
+          const message = error instanceof Error ? error.message : 'Terjadi kesalahan saat mendaftar';
+          set({
+            error: message,
+            isLoading: false,
+          });
           throw error;
         }
       },
 
       refreshAccessToken: async () => {
-        const { refreshToken } = get();
-        if (!refreshToken) {
-          set({ isAuthenticated: false });
+        const { tokens } = get();
+        if (!tokens?.refreshToken) {
+          set({ isAuthenticated: false, user: null, tokens: null });
           return;
         }
 
         try {
-          const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          const response = await fetch('/api/auth/refresh', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken }),
+            body: JSON.stringify({ refreshToken: tokens.refreshToken }),
           });
 
           if (!response.ok) {
-            throw new Error('Token refresh failed');
+            throw new Error('Gagal menyegarkan token');
           }
 
           const data = await response.json();
-          set({ accessToken: data.data.accessToken });
+          set({
+            tokens: {
+              accessToken: data.data.accessToken,
+              refreshToken: data.data.refreshToken,
+            },
+          });
         } catch (error) {
           set({
-            user: null,
-            accessToken: null,
-            refreshToken: null,
             isAuthenticated: false,
+            user: null,
+            tokens: null,
+            error: 'Sesi Anda telah berakhir. Silakan masuk kembali.',
+          });
+        }
+      },
+
+      updateProfile: async (data) => {
+        set({ isLoading: true, error: null });
+        try {
+          const { tokens } = get();
+          if (!tokens?.accessToken) {
+            throw new Error('Token tidak ditemukan');
+          }
+
+          const response = await fetch('/api/auth/profile', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${tokens.accessToken}`,
+            },
+            body: JSON.stringify(data),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error?.message || 'Gagal memperbarui profil');
+          }
+
+          const result = await response.json();
+          set({
+            user: result.data,
+            isLoading: false,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Terjadi kesalahan saat memperbarui profil';
+          set({
+            error: message,
+            isLoading: false,
           });
           throw error;
         }
       },
 
       checkAuth: async () => {
-        const { accessToken } = get();
-        if (!accessToken) {
-          set({ isAuthenticated: false });
-          return;
-        }
-
         set({ isLoading: true });
         try {
-          const response = await fetch(`${API_BASE_URL}/auth/me`, {
+          const { tokens } = get();
+          if (!tokens?.accessToken) {
+            set({ isLoading: false, isAuthenticated: false });
+            return;
+          }
+
+          const response = await fetch('/api/auth/me', {
             method: 'GET',
             headers: {
-              Authorization: `Bearer ${accessToken}`,
+              Authorization: `Bearer ${tokens.accessToken}`,
             },
           });
 
           if (!response.ok) {
-            throw new Error('Auth check failed');
+            if (response.status === 401) {
+              await get().refreshAccessToken();
+            } else {
+              throw new Error('Gagal memverifikasi autentikasi');
+            }
+            set({ isLoading: false });
+            return;
           }
 
           const data = await response.json();
@@ -187,45 +250,10 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           set({
             isAuthenticated: false,
+            user: null,
+            tokens: null,
             isLoading: false,
           });
-        }
-      },
-
-      updateUserProfile: async (data) => {
-        const { accessToken, user } = get();
-        if (!accessToken || !user) {
-          throw new Error('Tidak terautentikasi');
-        }
-
-        set({ isLoading: true, error: null });
-        try {
-          const response = await fetch(`${API_BASE_URL}/auth/profile`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify(data),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(
-              errorData.error?.message || 'Gagal memperbarui profil'
-            );
-          }
-
-          const result = await response.json();
-          set({
-            user: result.data,
-            isLoading: false,
-          });
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Terjadi kesalahan';
-          set({ error: message, isLoading: false });
-          throw error;
         }
       },
     }),
@@ -233,8 +261,7 @@ export const useAuthStore = create<AuthState>()(
       name: 'auth-storage',
       partialize: (state) => ({
         user: state.user,
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
+        tokens: state.tokens,
         isAuthenticated: state.isAuthenticated,
       }),
     }
