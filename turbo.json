@@ -1,23 +1,38 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "version": "1",
-  "globalDependencies": ["**/.env.local"],
+  "globalDependencies": [
+    "**/.env",
+    "**/.env.local",
+    "**/.env.*.local"
+  ],
   "globalEnv": [
     "NODE_ENV",
-    "DATABASE_URL",
-    "JWT_SECRET",
-    "JWT_REFRESH_SECRET",
-    "NEXT_PUBLIC_API_URL"
+    "VERCEL_ENV"
   ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": [".next/**", "dist/**"],
-      "cache": true
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "build/**"
+      ],
+      "cache": true,
+      "env": [
+        "DATABASE_URL",
+        "NEXTAUTH_URL",
+        "NEXTAUTH_SECRET"
+      ]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "interactive": true,
+      "dependsOn": [
+        "^dev"
+      ]
     },
     "lint": {
       "outputs": [],
@@ -28,40 +43,50 @@
       "cache": true
     },
     "test": {
-      "outputs": ["coverage/**"],
+      "outputs": [
+        "coverage/**"
+      ],
       "cache": true
     },
     "test:watch": {
       "cache": false,
-      "persistent": true
+      "interactive": true
     },
     "db:migrate": {
       "cache": false,
-      "persistent": false
+      "env": [
+        "DATABASE_URL"
+      ]
     },
     "db:seed": {
       "cache": false,
-      "persistent": false,
-      "dependsOn": ["db:migrate"]
-    },
-    "db:push": {
-      "cache": false,
-      "persistent": false
+      "dependsOn": [
+        "db:migrate"
+      ],
+      "env": [
+        "DATABASE_URL"
+      ]
     },
     "db:studio": {
       "cache": false,
-      "persistent": true
+      "interactive": true
     }
   },
   "pipeline": {
-    "build": {
-      "dependsOn": ["^build"],
-      "outputs": [".next/**", "dist/**"],
-      "cache": true
-    },
     "dev": {
       "cache": false,
-      "persistent": true
+      "interactive": true
+    },
+    "build": {
+      "dependsOn": [
+        "^build",
+        "lint",
+        "type-check"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**"
+      ]
     },
     "lint": {
       "outputs": [],
@@ -72,30 +97,11 @@
       "cache": true
     },
     "test": {
-      "outputs": ["coverage/**"],
+      "outputs": [
+        "coverage/**"
+      ],
       "cache": true
-    },
-    "test:watch": {
-      "cache": false,
-      "persistent": true
-    },
-    "@repo/api#build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**"],
-      "cache": true
-    },
-    "@repo/web#build": {
-      "dependsOn": ["^build"],
-      "outputs": [".next/**"],
-      "cache": true
-    },
-    "@repo/web#dev": {
-      "cache": false,
-      "persistent": true
-    },
-    "@repo/api#dev": {
-      "cache": false,
-      "persistent": true
     }
-  }
+  },
+  "ui": "tui"
 }
